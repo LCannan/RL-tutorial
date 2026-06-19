@@ -6,13 +6,17 @@ import random
 
 class ReplayBuffer:
     def __init__(self, capacity):
+        # 双边队列，当向队列中添加元素时，如果数量超过 capacity，最左边（最老）的元素会自动被踢出
         self.buffer = collections.deque(maxlen=capacity) 
 
     def add(self, state, action, reward, next_state, done): 
+        # 将一条经验打包成元组，存入池子
         self.buffer.append((state, action, reward, next_state, done)) 
 
     def sample(self, batch_size): 
+        # 从池子中随机抽取 batch_size 个样本
         transitions = random.sample(self.buffer, batch_size)
+         # 下面是将抽出的 batch 数据解包，重组成列的形式，方便喂给神经网络
         state, action, reward, next_state, done = zip(*transitions)
         return np.array(state), action, reward, np.array(next_state), done 
 
@@ -32,28 +36,33 @@ def train_on_policy_agent(env, agent, num_episodes):
     for i in range(10):
         with tqdm(total=int(num_episodes/10), desc='Iteration %d' % i) as pbar:
             for i_episode in range(int(num_episodes/10)):
-                episode_return = 0
+                episode_return = 0 # 将本回合的累计奖励清零
 
                 transition_dict = {'states': [], 'actions': [], 'next_states': [], 'rewards': [], 'dones': []}
                 
-                state, _ = env.reset()
-                done = False
+                state, _ = env.reset() # 重置环境，获取初始状态 s
+                done = False # 标记本回合是否结束
                 
                 while not done:
+                    # 智能体根据当前状态选择动作
                     action = agent.take_action(state)
+                    # 执行动作，环境返回下一步的状态、奖励、以及是否结束
                     next_state, reward, terminated, truncated, _ = env.step(action)
                     done = terminated or truncated
 
+                    # 将这一步的经验塞进本局的临时字典中
                     transition_dict['states'].append(state)
                     transition_dict['actions'].append(action)
                     transition_dict['next_states'].append(next_state)
                     transition_dict['rewards'].append(reward)
                     transition_dict['dones'].append(done)
 
+                    # 更新当前状态，累加奖励
                     state = next_state
                     episode_return += reward
 
                 return_list.append(episode_return)
+                # 把这一整局的轨迹数据（Trajectory）一次性喂给智能体进行网络更新
                 agent.update(transition_dict)
                 if (i_episode+1) % 10 == 0:
                     pbar.set_postfix({'episode': '%d' % (num_episodes/10 * i + i_episode+1), 'return': '%.3f' % np.mean(return_list[-10:])})
@@ -65,24 +74,32 @@ def train_off_policy_agent(env, agent, num_episodes, replay_buffer, minimal_size
     for i in range(10):
         with tqdm(total=int(num_episodes/10), desc='Iteration %d' % i) as pbar:
             for i_episode in range(int(num_episodes/10)):
-                episode_return = 0
+                episode_return = 0  # 将本回合的累计奖励清零
 
-                state, _ = env.reset()
-                done = False
+                state, _ = env.reset() # 重置环境，获取初始状态 s
+                done = False # 标记本回合是否结束
 
                 while not done:
+                    # 智能体根据当前状态选择动作
                     action = agent.take_action(state)
+                    # 执行动作，环境返回下一步的状态、奖励、以及是否结束
                     next_state, reward, terminated, truncated, _ = env.step(action)
                     done = terminated or truncated
                     
+                    # 将这一步的经验存入replay_buffer中
                     replay_buffer.add(state, action, reward, next_state, done)
                     
+                    # 更新当前状态，累加奖励
                     state = next_state
                     episode_return += reward
 
+                    # 预热机制：如果回放池里的数据太少，就先不训练，只收集数据
                     if replay_buffer.size() > minimal_size:
+                        # 从经验回放池中随机抽取一个批次（Batch）的数据
                         b_s, b_a, b_r, b_ns, b_d = replay_buffer.sample(batch_size)
+                        # 打包成字典
                         transition_dict = {'states': b_s, 'actions': b_a, 'next_states': b_ns, 'rewards': b_r, 'dones': b_d}
+                         # 把这批随机数据喂给智能体，进行梯度下降，更新神经网络
                         agent.update(transition_dict)
 
                 return_list.append(episode_return)
